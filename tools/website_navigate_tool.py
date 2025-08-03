@@ -13,11 +13,6 @@ website_list = [
     {"name":"Bing","url":"https://www.bing.com"},
     {"name":"必应","url":"https://www.bing.com"},
     {"name":"360搜索","url":"https://www.so.com"},
-    {"name":"360搜索","url":"https://www.so.com"},
-    {"name":"360搜索","url":"https://www.so.com"},
-    {"name":"360搜索","url":"https://www.so.com"},
-    {"name":"360搜索","url":"https://www.so.com"},
-    {"name":"360搜索","url":"https://www.so.com"},
 ]
 
 @register_tool("WEB工具","网站导航工具")
@@ -29,17 +24,17 @@ class WebsiteNavigate(wx.Panel):
         navigate_sizer = wx.BoxSizer(wx.VERTICAL)
 
         #2,添加一个网站导航工具的标题
-        navigate_title = wx.StaticText(self,label="网站导航工具")
-        navigate_sizer.Add(navigate_title,0,wx.ALL,5)
+        
 
         #3,添加一个网站导航工具的列表
         for website in website_list:
             link = wx.adv.HyperlinkCtrl(self,id=wx.ID_ANY,label=website["name"],url=website["url"])
             link.Bind(wx.adv.EVT_HYPERLINK,self.openlink)
             navigate_sizer.Add(link,0,wx.ALL,5)
+        self.SetSizer(navigate_sizer)
 
     def openlink(self,event):
-        url = event.geturl()
+        url = event.GetURL()
         webbrowser.open(url)
 
 
