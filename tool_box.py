@@ -26,6 +26,7 @@ def auto_import_tool(tools_ptah:str):
     current_file = Path(__file__).resolve() #当前文件的绝对路径
     current_dir = current_file.parent #当前文件的父目录
     tools_abs_path = current_dir/tools_ptah #工具目录的绝对路径
+    print(f"工具目录的绝对路径为：{tools_abs_path}")
 
     #2，检查目录是否存在
     if not tools_abs_path.is_dir():
