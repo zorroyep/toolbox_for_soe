@@ -112,13 +112,17 @@ class ToolBoxMainFrame(wx.Frame):
 
         #1，创建面板布局器
         self.panel_sizer = wx.BoxSizer(wx.VERTICAL)
-        #2，添加一个界面容器
+        #2 添加一个界面容器，用来装载工具分类界面或工具详情界面，通过panel的Hide和Show方法来切换两个页面
         self.panel = wx.Panel(self)
-        #3，把工具分类界面加载到面板中
+        #3 把工具分类界面加载到面板中
         self.tools_category_list = list(tool_list.keys())
         self.category_panel = CategoryPanel(self.panel, self.tools_category_list, self.on_category_click)
         self.panel_sizer.Add(self.category_panel, 1, wx.ALL|wx.EXPAND, 5)
-        #4，应用布局器并展示窗口
+        self.category_panel.Show()
+        #4 用字典缓存所有工具分类的详情页面
+        self.tools_detail_panels = {}#格式，{分类名称:详情面板}
+        self.current_detail_panel = None
+        #5 应用布局器并展示窗口
         self.panel.SetSizer(self.panel_sizer)
         self.Center()
         self.Show()
@@ -128,27 +132,34 @@ class ToolBoxMainFrame(wx.Frame):
         '''
         点击分类回调函数，切换到具体工具操作界面
         '''
-        # 获取点击的分类名称
-        category_name = event.GetEventObject().GetLabel()
-        #self.panel_sizer.Clear()
-        self.category_panel.Hide()
-        #1，获取分类下的所有工具
+        #1 获取点击的分类名称及指定分类工具的列表
+        category_name = event.GetEventObject().GetLabel()#这一步很关键， 不获取按钮标签就无法进入详情页面
         tools_by_name = TOOL_LIST.get(category_name, {})#获取不到时，返回一个空字典
-        #2，创建工具详情面板
-        self.detail_panel = ToolDetailPanel(self.panel,tools_by_name,self.on_back)
-        #3，替换分类面板为工具详情面板
-        self.panel_sizer.Add(self.detail_panel, 1, wx.ALL|wx.EXPAND, 5)
-        #4，刷新窗口
+        #2 隐藏分类面板和当前显示的详情页面
+        self.category_panel.Hide()
+        if self.current_detail_panel:
+            self.current_detail_panel.Hide()
+        #3 按需创建面板，首次点击则直接创建，否则复用已创建的面板
+        if category_name not in self.tools_detail_panels:
+            detail_panel = ToolDetailPanel(self.panel,tools_by_name,self.on_back)
+            self.panel_sizer.Add(detail_panel,1,wx.ALL|wx.EXPAND,5)
+            self.tools_detail_panels[category_name] = detail_panel# 存入工具列表字典，方便后续复用
+        else:
+            detail_panel = self.tools_detail_panels[category_name]
+        #4 显示目标面板并更新当前状态
+        detail_panel.Show()
+        self.current_detail_panel = detail_panel
+        #5 刷新布局
         self.panel.Layout()
-        pass
     def on_back(self):
         '''
         点击返回按钮回调函数，返回工具分类界面
         '''
-        self.detail_panel.Hide()
+        if self.current_detail_panel:
+            self.current_detail_panel.Hide()
+            self.current_detail_panel = None# 清空当前记录
         self.category_panel.Show()
         self.panel.Layout()
-        pass
 
 if __name__ == "__main__":
     app = wx.App()
