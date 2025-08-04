@@ -11,9 +11,9 @@
 '''
 
 import wx
-import importlib,os
+import importlib
 from typing import Dict,Callable,Type
-#import tools.ping_testing_tool
+from pathlib import Path
 from register_tool import TOOL_LIST
 
 #自动引入所有的工具类
@@ -22,24 +22,29 @@ def auto_import_tool(tools_ptah:str):
     自动引入所有的工具类
     :param tools_dir: 工具目录
     '''
-    #1，获取工具目录的绝对路径
-    current_path = os.path.dirname(os.path.abspath(__file__))
-    tools_abs_path = os.path.join(current_path,tools_ptah)
+   #1，获取工具目录的绝对路径
+    current_file = Path(__file__).resolve() #当前文件的绝对路径
+    current_dir = current_file.parent #当前文件的父目录
+    tools_abs_path = current_dir/tools_ptah #工具目录的绝对路径
 
     #2，检查目录是否存在
-    if not os.path.isdir(tools_abs_path):
+    if not tools_abs_path.is_dir():
         print(f"目录{tools_abs_path}不存在")
         return
     #3，遍历目录下所有文件，需要排除__init__.py文件和隐藏文件
-    for file_name in os.listdir(tools_abs_path):
-        if file_name.endswith(".py") and not file_name.startswith(("__",".")):
-            module_name = f"{tools_ptah}.{file_name[:-3]}"
-            try:
-                importlib.import_module(module_name)
-                print(f"导入模块{module_name}成功")
-            except Exception as e:
-                print(f"导入模块{module_name}失败，错误信息：{e}")
+    for py_file in tools_abs_path.glob("*.py"):
+        file_name = py_file.name
+        if file_name.startswith(("__",".")):
+            continue
 
+        #构建模块名
+        module_name = f"{tools_ptah}.{file_name[:-3]}" 
+        #导入模块
+        try:
+            importlib.import_module(module_name)
+            print(f"导入模块{module_name}成功")
+        except Exception as e:
+            print(f"导入模块{module_name}失败，错误信息：{e}")
 
 
 class ToolDetailPanel(wx.Panel):
