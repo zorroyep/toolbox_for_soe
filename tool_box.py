@@ -34,17 +34,15 @@ def auto_import_tool(tools_ptah:str):
     #3，遍历目录下所有文件，需要排除__init__.py文件和隐藏文件
     for py_file in tools_abs_path.glob("*.py"):
         file_name = py_file.name
-        if file_name.startswith(("__",".")):
-            continue
-
+        if file_name.endswith(".py") and not file_name.startswith(("__",".")) and not file_name=="utils.py":
         #构建模块名
-        module_name = f"{tools_ptah}.{file_name[:-3]}" 
-        #导入模块
-        try:
-            importlib.import_module(module_name)
-            print(f"导入模块{module_name}成功")
-        except Exception as e:
-            print(f"导入模块{module_name}失败，错误信息：{e}")
+            module_name = f"{tools_ptah}.{file_name[:-3]}" 
+            #导入模块
+            try:
+                importlib.import_module(module_name)
+                print(f"导入模块{module_name}成功")
+            except Exception as e:
+                print(f"导入模块{module_name}失败，错误信息：{e}")
 
 
 class ToolDetailPanel(wx.Panel):
