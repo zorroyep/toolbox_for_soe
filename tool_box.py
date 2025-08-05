@@ -92,7 +92,7 @@ class CategoryPanel(wx.Panel):
         self.tools_category_list = tools_category_list
         self.on_category_click = on_category_click
         #1，创建布局器
-        category_sizer = wx.BoxSizer(wx.VERTICAL)
+        category_sizer = wx.GridSizer(cols=4,rows=4,hgap=5,vgap=5)#每行4个按钮，按钮间距为5像素
         #2，添加分类按钮
         for category_name in self.tools_category_list:
             category_btn = wx.Button(self,label=category_name)
