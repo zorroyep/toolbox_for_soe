@@ -11,28 +11,28 @@ def setup_logging():
     logger.add(
         #输出日志到控制台，格式是：时间 | 日志等级 | 进程名 | 线程名 | 日志消息
         sink=sys.stdout,
-        format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {process.name:<15} | {thread_name:<15} | {message}",
+        format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {process.name:<15} | {thread.name:<15} | {message}",
         level="DEBUG",
         filter=lambda record:'coroutine' not in record
         )
     logger.add(
         #输出日志到文件toolbox.log，格式是：时间 | 日志等级 | 进程名 | 线程名 | 日志消息
         sink="toolbox.log",
-        format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {process.name:<15} | {thread_name:<15} | {message}",
+        format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {process.name:<15} | {thread.name:<15} | {message}",
         level="DEBUG",
         filter=lambda record:'coroutine' not in record
         )
     logger.add(
         #输出日志到控制台，并能记录协程信息，格式是：时间 | 日志等级 | 进程名 | 线程名 | 协程名 | 日志消息
         sink=sys.stdout,
-        format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {process.name:<15} | {thread_name:<15} | {coroutine.name:15} | {message}",
+        format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {process.name:<15} | {thread.name:<15} | {coroutine.name:15} | {message}",
         level="DEBUG",
         filter=lambda record:'coroutine' in record
         )
     logger.add(
         #输出日志到文件toolbox.log，并能记录协程信息，格式是：时间 | 日志等级 | 进程名 | 线程名 | 协程名 | 日志消息
         sink="toolbox.log",
-        format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {process.name:<15} | {thread_name:<15} | {coroutine.name:15} | {message}",
+        format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {process.name:<15} | {thread.name:<15} | {coroutine.name:15} | {message}",
         level="DEBUG",
         filter=lambda record:'coroutine' in record
         )
