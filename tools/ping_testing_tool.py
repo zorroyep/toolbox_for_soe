@@ -152,10 +152,11 @@ class PingTester(wx.Panel):
 if __name__ ==  "__main__":
     app = wx.App()
     frame = wx.Frame(None)
+    frame.SetMinSize(wx.Size(400, 300))
     panel = wx.Panel(frame)
     sizer = wx.BoxSizer(wx.VERTICAL)
     pingTester = PingTester(panel)
-    sizer.Add(pingTester,0,wx.EXPAND,5)
+    sizer.Add(pingTester,1,wx.EXPAND,5)#Add方法的第二个参数0表示控制或子sizer不会随着父容器的大小变化而变化，比例因子大于0时，表示控件或子sizer会根据比例因子的值来调整大小
     panel.SetSizer(sizer)
     frame.Show()
     frame.Center()

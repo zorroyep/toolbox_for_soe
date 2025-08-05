@@ -109,7 +109,7 @@ class ToolBoxMainFrame(wx.Frame):
         '''
 
         
-        super().__init__(parent=None,title="工具合集")
+        super().__init__(parent=None,title="工具合集",size=wx.Size(800,600))
 
         #1，创建面板布局器
         self.panel_sizer = wx.BoxSizer(wx.VERTICAL)
