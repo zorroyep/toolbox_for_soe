@@ -9,12 +9,13 @@
 变量名命名规则：下划线命名法，全小写
 常量名命名规则：下划线命名法，单词首字母大写
 '''
-
+import sys
 import wx
 import importlib
 from typing import Dict,Callable,Type
 from pathlib import Path
 from register_tool import TOOL_LIST
+from tools.utils import setup_logging;logger = setup_logging()#设置日志记录器
 
 #自动引入所有的工具类
 def auto_import_tool(tools_ptah:str):
@@ -26,11 +27,12 @@ def auto_import_tool(tools_ptah:str):
     current_file = Path(__file__).resolve() #当前文件的绝对路径
     current_dir = current_file.parent #当前文件的父目录
     tools_abs_path = current_dir/tools_ptah #工具目录的绝对路径
-    print(f"工具目录的绝对路径为：{tools_abs_path}")
+    sys.path.append(str(tools_abs_path))# 添加工具目录到系统路径
+    logger.info(f"添加工具目录到系统路径：{tools_abs_path}")
 
     #2，检查目录是否存在
     if not tools_abs_path.is_dir():
-        print(f"目录{tools_abs_path}不存在")
+        logger.error(f"目录{tools_abs_path}不存在")
         return
     #3，遍历目录下所有文件，需要排除__init__.py文件和隐藏文件
     for py_file in tools_abs_path.glob("*.py"):
@@ -41,9 +43,9 @@ def auto_import_tool(tools_ptah:str):
             #导入模块
             try:
                 importlib.import_module(module_name)
-                print(f"导入模块{module_name}成功")
+                logger.info(f"导入模块{module_name}成功")
             except Exception as e:
-                print(f"导入模块{module_name}失败，错误信息：{e}")
+                logger.error(f"导入模块{module_name}失败，错误信息：{e}")
 
 
 class ToolDetailPanel(wx.Panel):
@@ -164,6 +166,6 @@ if __name__ == "__main__":
     app = wx.App()
     auto_import_tool("tools")
     frame = ToolBoxMainFrame(TOOL_LIST)
-    print(TOOL_LIST)
+    logger.info(TOOL_LIST)
     frame.Show()
     app.MainLoop()
