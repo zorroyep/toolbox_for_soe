@@ -132,67 +132,165 @@ async def ping_host(host, cancel_event:asyncio.Event,timeout=2):
 
 
 # 异步Ping网络
-async def ping_network(hosts_info, cancel_event, result_callback):
-    all_results = []
-    for host in hosts_info:
-        if cancel_event.is_set():
-            break
-        result = await ping_host(host, cancel_event)
-        if result:
-            result_callback(result)
-            all_results.append(result)
-    return all_results
+async def ping_network(hosts_info, cancel_event:asyncio.Event, result_callback,process_callback,max_concurrent_tasks=10):
+    '''
+    异步Ping网络中的多个主机。
+
+    :param hosts_info: 主机信息列表，可以是IP地址或CIDR块
+    :param cancel_event: 取消事件，用于取消任务
+    :param result_callback: 结果回调函数，用于处理每个主机的Ping结果
+    :param process_callback: 进度回调函数，用于处理任务进度
+    :param max_concurrent_tasks: 最大并发任务数，默认10个任务并发执行
+    :return: 所有主机的Ping结果列表
+    '''
+    all_results = []# 用于存储所有主机的Ping结果
+    total = len(hosts_info)# 任务总数
+    completed = 0# 已完成的任务数
+
+    #分批添加任务，控制并发数量，默认是10个任务并发执行
+    try:
+        for i in range(0,total,max_concurrent_tasks):
+            if cancel_event.is_set():
+                break
+            batch = hosts_info[i:i+max_concurrent_tasks]# 获取当前批次的主机信息
+            tasks = [asyncio.create_task(ping_host(host,cancel_event)) for host in batch]# 创建当前批次的任务
+            logger.info(f"开始处理批次 {i//max_concurrent_tasks + 1}，共 {len(tasks)} 个任务")
+
+            try:
+                cancellation_occurred = False# 取消事件是否已发生
+                for future in asyncio.as_completed(tasks):
+                    if cancel_event.is_set() and not cancellation_occurred:
+                        logger.info("取消事件已设置，取消当前批次的任务")
+                        #取消剩余任务
+                        for task in tasks:
+                            if not task.done():
+                                task.cancel()
+                        await asyncio.gather(*tasks,return_exceptions=True)  # 确保所有任务都被取消
+                        cancellation_occurred = True
+
+                    if cancellation_occurred:
+                        #处理剩余未完成的future以避免警告
+                        try:
+                            await future
+                        except asyncio.CancelledError:
+                            logger.info(f"任务取消失败，任务已取消")
+                        continue
+                    
+                    #任务正常完成
+                    try:
+                        result = await future
+                        if result:
+                            result_callback(result)  # 将结果返回给主线程，用于更新UI
+                            all_results.append(result)  # 将结果添加到总结果列表
+                    except asyncio.CancelledError:
+                        logger.info(f"任务被取消，跳过处理")
+                    #任务完成，更新进度
+                    completed += 1
+                    process_callback(completed, total)  # 更新进度回调
+                    logger.info(f"批次 {i//max_concurrent_tasks + 1} 任务完成，已完成 {completed}/{total} 个任务")
+            except Exception as e:
+                logger.error(f"批次 {i//max_concurrent_tasks + 1} 任务处理异常: {e}")
+                #确保取消所有任务
+                for task in tasks:
+                    if not task.done():
+                        task.cancel()
+    
+    except Exception as e:
+        logger.error(f"Ping网络任务异常: {e}")
+
+    finally:
+        cancel_event.set()  # 设置取消事件，确保所有任务都能被取消
+    return all_results  # 返回所有主机的Ping结果列表
+
+
 
 @register_tool("网络类","PING工具")
 class PingTester(wx.Panel):
     def __init__(self, parent):
         super().__init__(parent)
 
-        sizer = wx.BoxSizer(wx.VERTICAL)
+        #设置中文字体支持
+        font = wx.Font(12, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL)
+        self.SetFont(font)
+
+        sizer = wx.BoxSizer(wx.VERTICAL)# 垂直布局
+
 
         # 主机输入框
-        host_lable = wx.StaticText(self, label="主机：")
-        sizer.Add(host_lable, 0, wx.EXPAND, 5)
+        host_lable = wx.StaticText(self, label="主机：(可输入IP或CIDR，多个用逗号分隔):")
+        sizer.Add(host_lable, 0, wx.EXPAND|wx.ALL, 5)
         self.host_inputbox = wx.TextCtrl(self)
-        sizer.Add(self.host_inputbox, 0, wx.EXPAND, 5)
+        sizer.Add(self.host_inputbox, 0, wx.EXPAND|wx.ALL|wx.LEFT|wx.RIGHT|wx.BOTTOM, 5)
 
+        #按钮区域
+        btn_sizer = wx.BoxSizer(wx.HORIZONTAL)
         # Ping测试开始按钮
         self.start_ping_btn = wx.Button(self, label="开始Ping测试")
         self.start_ping_btn.Bind(wx.EVT_BUTTON, self.start_ping)
-        sizer.Add(self.start_ping_btn, 0, wx.EXPAND, 5)
+        sizer.Add(self.start_ping_btn, 1, wx.EXPAND|wx.RIGHT, 2)
 
         # 任务取消按钮
         self.cancel_btn = wx.Button(self, label="取消")
-        self.cancel_btn.Bind(wx.EVT_BUTTON, self.cancelTask)
+        self.cancel_btn.Bind(wx.EVT_BUTTON, self.cancel_task)
         self.cancel_btn.Disable()
-        sizer.Add(self.cancel_btn, 0, wx.EXPAND, 5)
+        sizer.Add(self.cancel_btn, 1, wx.EXPAND|wx.LEFT, 2)
+
+        #进度条
+        self.progress = wx.Gauge(self,range=100)
+        sizer.Add(self.progress,0,wx.EXPAND|wx.LEFT|wx.RIGHT,5)
+        #进度条文本
+        self.process_text = wx.StaticText(self,label="准备就绪")
+        sizer.Add(self.process_text,0,wx.LEFT|wx.TOP|wx.BOTTOM,5)
 
         # 结果显示框
         self.result_text = wx.TextCtrl(self, style=wx.TE_MULTILINE | wx.TE_READONLY)
         sizer.Add(self.result_text, 1, wx.EXPAND, 5)
-        self.SetSizer(sizer)
 
+        # 设置布局
+        self.SetSizer(sizer)
+    
+        #功能逻辑
         self.cancel_event = asyncio.Event()  # 用于取消任务的事件
         self.scan_task = None  # 保存扫描任务的变量
         # 创建事件循环并在新线程中运行
-        self.loop = asyncio.new_event_loop()
-        threading.Thread(target=self._runLoop, daemon=True).start()
+        self.loop = None
+        self.loop_thread = None
 
-    def _runLoop(self):
-        asyncio.set_event_loop(self.loop)
-        self.loop.run_forever()
+        self._start_event_loop()
 
-    def start_ping(self, event):
-        self.cancel_event.clear()
-        self.cancel_btn.Enable()
-        self.start_ping_btn.Disable()
-        self.host_inputbox.Disable()
-        self.result_text.Clear()
+    def _start_event_loop(self):
+        self.loop = asyncio.new_event_loop()  # 创建新的事件循环
+        self.loop_thread = threading.Thread(target=self._run_loop,args=(self.loop,), daemon=True)  # 创建线程运行事件循环
+        self.loop_thread.start()  # 启动线程
 
+    def _run_loop(self,loop):
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_forever()
+        finally:
+            loop.close()  # 确保事件循环在退出时被关闭
+            logger.info("事件循环已关闭")
+
+    def start_ping(self, event:asyncio.Event):
+        '''
+        开始Ping测试，获取用户输入的主机信息，并异步执行Ping任务。
+        :param event: 事件对象，未使用
+        由于需要在子线程中运行任务，所以需要使用asyncio.run_coroutine_threadsafe方法将异步任务提交到事件循环中
+        并且需要在子线程代码中使用wx.CallAfter方法，这样可以实现线程安全的在主线程中更新GUI
+        '''
+        self.cancel_event.clear()# 清除取消事件，准备开始新的Ping任务
+        self.cancel_btn.Enable()# 启用取消按钮
+        self.start_ping_btn.Disable()# 禁用开始Ping按钮，防止重复点击
+        self.host_inputbox.Disable()# 禁用主机输入框，防止重复输入
+        self.result_text.Clear() # 清空结果显示框
+        self.progress.SetValue(0)  # 重置进度条
+
+        # 获取用户输入的主机信息
         hosts_info = self.host_inputbox.GetValue()
-        hosts_list = ipAddressCheck(hosts_info)
+        hosts_list = ipAddressCheck(hosts_info)# 检查主机信息是否有效
 
-        if hosts_list is None:
+
+        if hosts_list is None or not hosts_list:
             wx.MessageBox("请输入正确的 IP 地址或 CIDR 块", "错误", wx.OK | wx.ICON_ERROR)
             self.start_ping_btn.Enable()
             self.host_inputbox.Enable()
@@ -200,40 +298,91 @@ class PingTester(wx.Panel):
             return
 
         hosts_info = [str(host) for host in hosts_list]
+        self.process_text.SetLabel(f"正在Ping {len(hosts_info)} 个主机...")# 更新进度条文本
 
-        # 提交异步Ping任务到事件循环
+        #检查事件循环是否已初始化
+        if self.loop is None or self.loop.is_closed():
+            raise RuntimeError("事件循环未初始化或已关闭，请先调用_start_event_loop方法")
+
+        # 提交异步Ping任务到事件循环，在同步代码中调用异步函数需要使用asyncio.run_coroutine_threadsafe方法，该方法第一个参数是异步方法，第二个参数是asyncio异步事件循环
         self.scan_task = asyncio.run_coroutine_threadsafe(
-            ping_network(hosts_info, self.cancel_event, self.updateResult),
+            ping_network(
+                hosts_info,
+                self.cancel_event,
+                self.update_result,
+                self.update_process_bar,
+                max_concurrent_tasks=10
+                ),
             self.loop
         )
-        self.scan_task.add_done_callback(self._onScanCompleteThreadsafe)
+        self.scan_task.add_done_callback(self._on_scan_complete_threadsafe)
 
-    def _onScanCompleteThreadsafe(self, future):
-        wx.CallAfter(self.onScanComplete, future)
+    def _on_scan_complete_threadsafe(self, future):
+        '''异步任务完成回调函数，用于扫描任务完成后更新GUI'''
+        wx.CallAfter(self.on_scan_complete, future)#wx.CallAfter方法用于在主线程中调用异步任务完成回调函数，避免在子线程中更新GUI
 
-    def updateResult(self, result):
-        wx.CallAfter(self.result_text.AppendText, result + "\n")
 
-    def onScanComplete(self, future):
-        self.start_ping_btn.Enable()
-        self.host_inputbox.Enable()
-        self.cancel_btn.Disable()
-        wx.CallAfter(self.result_text.AppendText, "\n扫描完成！")
+    def on_scan_complete(self, future):
+        '''扫描任务完成回调函数，用于在任务完成后更新GUI'''
+        try:
+            future.result()
+        except asyncio.CancelledError:
+            wx.CallAfter(self.result_text.AppendText, "\n扫描已取消！")#扫描完成后更新结果文本框
+            wx.CallAfter(self.process_text.SetLabel,"扫描已取消")
+        except Exception as e:
+            wx.CallAfter(self.result_text.AppendText, f"\n扫描完成！\n错误信息：{e}")#扫描完成后更新结果文本框
+            wx.CallAfter(self.process_text.SetLabel,"扫描完成")
+        finally:
+            wx.CallAfter(self.cancel_btn.Disable)#取消按钮禁用
+            wx.CallAfter(self.start_ping_btn.Enable)#开始按钮启用
+            wx.CallAfter(self.host_inputbox.Enable)#主机输入框启用
 
-    def cancelTask(self, event):
-        self.cancel_event.set()
-        if self.scan_task:
-            self.scan_task.cancel()
-        wx.MessageBox("任务已取消", "提示", wx.OK | wx.ICON_INFORMATION)
-        self.start_ping_btn.Enable()
-        self.host_inputbox.Enable()
-        self.cancel_btn.Disable()
+    def update_result(self, result):
+        '''更新结果显示，线程安全'''
+        wx.CallAfter(self.result_text.AppendText, result + "\n")#将结果追加到结果文本框中，线程安全
 
+    def update_process_bar(self,completed,total):
+        '''更新进程条，线程安全'''
+        process = int((completed/total)*100) if total >0 else 0
+        wx.CallAfter(self.progress.SetValue,process)#更新进度条
+        wx.CallAfter(self.process_text.SetLabel,f"已完成{completed}/{total}")#更新进度文本
+    
+    def _restore_ui_state(self):
+        '''恢复UI状态'''
+        try:
+            wx.CallAfter(self.cancel_btn.Disable)#取消按钮禁用
+            wx.CallAfter(self.start_ping_btn.Enable)#开始按钮启用
+            wx.CallAfter(self.host_inputbox.Enable)#主机输入框启用
+            wx.CallAfter(self.result_text.Clear)#清空结果文本框
+            wx.CallAfter(self.progress.SetValue,0)#进度条设置为0
+            wx.CallAfter(self.process_text.SetLabel,"准备就绪")
+        except Exception as e:
+            logger.error(f"恢复UI状态时发生错误: {e}")
+
+    def cancel_task(self, event):
+        '''
+        取消当前Ping任务，并恢复UI状态。
+        :param event: 事件对象
+        '''
+        if not self.scan_task or self.scan_task.done():
+            wx.MessageBox("没有正在进行的Ping任务", "提示", wx.OK | wx.ICON_INFORMATION)
+            return
+        try:
+            self.cancel_event.set()
+            self.cancel_btn.Disable()
+            self.process_text.SetLabel("正在取消任务")
+            if self.loop and self.loop.is_running():
+                self.loop.call_soon_threadsafe(lambda:None)
+            logger.info("已发送取消事件")
+        except Exception as e:
+            logger.error(f"取消任务时发生错误: {e}")
+        finally:
+            self._restore_ui_state()
 
 if __name__ ==  "__main__":
     app = wx.App()
     frame = wx.Frame(None)
-    frame.SetMinSize(wx.Size(400, 300))
+    frame.SetMinSize(wx.Size(800, 600))
     panel = wx.Panel(frame)
     sizer = wx.BoxSizer(wx.VERTICAL)
     pingTester = PingTester(panel)
