@@ -4,6 +4,7 @@ setup_sys_path() #设置系统路径
 logger = setup_logging()  # 设置日志记录器
 import wx
 import asyncio
+import contextlib
 import threading,subprocess
 from utils import ipAddressCheck
 from register_tool import register_tool
@@ -18,9 +19,9 @@ async def ping_host(host, cancel_event:asyncio.Event,timeout=2):
     :param timeout: 超时时间，单位秒
     :return: 如果Ping通，返回包含主机信息的字符串；如果Ping不通或任务取消，返回相应信息
     """
-    if cancel_event.is_set():# 如果取消事件已设置，直接返回None
+    if cancel_event.is_set():# 任务未运行时如果被取消则
         logger.info(f"Ping {host} 任务已取消，直接返回None")
-        return None
+        return f"该任务未运行，用户取消Ping {host} 任务"
 
     try:
         if hasattr(subprocess, 'CREATE_NEW_PROCESS_GROUP'):  # CREATE_NEW_PROCESS_GROUP 是 Windows 系统特有的标志
@@ -51,27 +52,20 @@ async def ping_host(host, cancel_event:asyncio.Event,timeout=2):
 
         #判断任务是被取消还是正常完成
         if cancel_event.is_set():
-            if ping_task.returncode is None:#任务被取消，但是任务已经在运行中
-                logger.info(f"Ping {host} 任务被取消，尝试终止子进程...")
-                try:
-                    ping_task.terminate()#先尝试温和方式终止子进程
-                    try:
-                        await asyncio.wait_for(ping_task.wait(),timeout=1)#等待子进程自行结束，超时一秒，可以让子进程有时间清理资源
-                    except asyncio.TimeoutError:
-                        logger.warning(f"Ping {host} 子进程未能在1秒内结束，强制终止...")
-                    try:    
-                        ping_task.kill()#如果强制终止也失败，直接结束进程
-                        await ping_task.wait()#显式调用子进程的wait方法，确保子进程终止完成并回收资源，因此建议与上面的Kill方法配合使用
-                    except ProcessLookupError:
-                        logger.warning(f"Ping {host} 子进程已不存在，PASS")
-
-                except ProcessLookupError:
-                    logger.error(f"Ping {host} 子进程不存在,不需要终止")
-            logger.info(f"Ping {host} 任务被取消，直接返回None")
+            with contextlib.suppress(ProcessLookupError):
+                if ping_task.returncode is None:
+                    ping_task.terminate()
+                    with contextlib.suppress(asyncio.TimeoutError):
+                        await asyncio.wait_for(ping_task.wait(), timeout=1)  # 等待子进程自行结束，超时一秒
             return f"用户取消Ping {host} 任务"
+
         
         # 取消事件未设置，说明ping命令已完成，开始处理结果
         stdout,stderr = await ping_task.communicate()#需要获取子进程的输出和错误信息，确保管道资源被正确释放，ping_task.wait() 只会返回子进程的返回码，不会获取输出和错误信息，
+        if stderr:
+            logger.error(f"Ping {host} 子进程返回错误信息，判断为不可达")
+            return f"Ping {host} 子进程返回错误信息，判断为不可达"
+
         #stdout和stderr都是字节类型，需要解码为字符串，并且需要根据操作系统的不同进行解码
         if hasattr(subprocess, 'CREATE_NEW_PROCESS_GROUP'):  # Windows系统，使用gbk编码
             logger.info("Windows系统，使用gbk编码解码输出")
@@ -85,8 +79,7 @@ async def ping_host(host, cancel_event:asyncio.Event,timeout=2):
             logger.info(f"stdout:{stdout}")
             stderr = stderr.decode('utf-8', errors='ignore')
             logger.info(f"stderr:{stderr}")
-        #分析输出内容是否包含Ping成功的关键字
-        is_reachable = False
+
         if stdout:# 如果stdout不为空，说明Ping命令有输出内容
             success_keywords = [
                 "TTL=", 
@@ -103,26 +96,12 @@ async def ping_host(host, cancel_event:asyncio.Event,timeout=2):
                 "100% 丢失",
             ]
             # 检查输出内容是否包含成功的关键字
-            if any(keyword.lower() in stdout.lower()for keyword in success_keywords):
-                is_reachable = True
-            elif any(keyword.lower() in stdout.lower() for keyword in failure_keywords):
+            is_reachable = any(str(keyword) in str(stdout) for keyword in success_keywords)
+            if not is_reachable and any(str(keyword) in str(stdout) for keyword in failure_keywords):
                 is_reachable = False
-            else:
-                logger.info(f"Ping {host} 输出内容不包含成功或失败的关键字，判断为不可达")
-                is_reachable = False
-        elif stderr:# 如果stderr不为空，说明Ping命令有错误输出
-            logger.info(f"Ping {host} 输出内容包含错误信息，判断为不可达")
-            is_reachable = False
-        else:# 如果stdout和stderr都为空，说明Ping命令没有输出内容
-            return f"Ping {host} 没有输出成功或错误信息，无法判断主机是否可达"
+            return f"ping {host} 成功，主机可达" if is_reachable else f"ping {host} 失败，主机不可达"
+                               
 
-        #判断主机是否可达
-        if is_reachable:
-            logger.info(f"Ping {host} 成功，主机可达")
-            return f"Ping {host} 成功，主机可达"
-        else:
-            logger.info(f"Ping {host} 失败，主机不可达")
-            return f"Ping {host} 失败，主机不可达"
     except asyncio.TimeoutError:
         logger.error(f"Ping {host}任务超时")
         return f"Ping {host} 超时"
