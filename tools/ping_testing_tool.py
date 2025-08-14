@@ -236,7 +236,7 @@ class PingTester(wx.Panel):
             loop.close()  # 确保事件循环在退出时被关闭
             logger.info("事件循环已关闭")
 
-    def start_ping(self, event:asyncio.Event):
+    def start_ping(self, event:asyncio.Event):# 开始Ping测试按钮事件处理函数
         '''
         开始Ping测试，获取用户输入的主机信息，并异步执行Ping任务。
         :param event: 事件对象，未使用
@@ -285,28 +285,25 @@ class PingTester(wx.Panel):
     def _on_scan_complete_threadsafe(self, future):
         '''异步任务完成回调函数，用于扫描任务完成后更新GUI'''
         wx.CallAfter(self.on_scan_complete, future)#wx.CallAfter方法用于在主线程中调用异步任务完成回调函数，避免在子线程中更新GUI
-
-
     def on_scan_complete(self, future):
         '''扫描任务完成回调函数，用于在任务完成后更新GUI'''
         try:
             future.result()
-        except asyncio.CancelledError:
-            wx.CallAfter(self.result_text.AppendText, "\n扫描已取消！")#扫描完成后更新结果文本框
-            wx.CallAfter(self.process_text.SetLabel,"扫描已取消")
+            self.result_text.AppendText("\n扫描完成！")#扫描完成后更新结果文本框
+            self.process_text.SetLabel("扫描完成")#扫描完成后更新进程条文本
         except Exception as e:
-            wx.CallAfter(self.result_text.AppendText, f"\n扫描完成！\n错误信息：{e}")#扫描完成后更新结果文本框
-            wx.CallAfter(self.process_text.SetLabel,"扫描完成")
+            self.result_text.AppendText(f"\n扫描完成！\n错误信息：{e}")#扫描完成后更新结果文本框
+            self.process_text.SetLabel("扫描完成")
         finally:
-            wx.CallAfter(self.cancel_btn.Disable)#取消按钮禁用
-            wx.CallAfter(self.start_ping_btn.Enable)#开始按钮启用
-            wx.CallAfter(self.host_inputbox.Enable)#主机输入框启用
+            self._restore_ui_state()
+            logger.info("扫描任务完成")
 
-    def update_result(self, result):
+
+    def update_result(self, result):#传递给start_ping方法的更新结果函数
         '''更新结果显示，线程安全'''
         wx.CallAfter(self.result_text.AppendText, result + "\n")#将结果追加到结果文本框中，线程安全
 
-    def update_process_bar(self,completed,total):
+    def update_process_bar(self,completed,total):#传递给start_ping方法的更新进程条函数
         '''更新进程条，线程安全'''
         process = int((completed/total)*100) if total >0 else 0
         wx.CallAfter(self.progress.SetValue,process)#更新进度条
@@ -328,10 +325,10 @@ class PingTester(wx.Panel):
         wx.CallAfter(self._restore_ui_state)
 
 
-    def cancel_task(self, event):
+    def cancel_task(self, event):# 取消Ping测试按钮事件处理函数
         '''
         取消当前Ping任务，并恢复UI状态。
-        :param event: 事件对象
+        :param event: 事件对象,wx.Button使用bind方法绑定事件时，会自动传递事件对象
         '''
         if not self.scan_task or self.scan_task.done():
             wx.MessageBox("没有正在进行的Ping任务", "提示", wx.OK | wx.ICON_INFORMATION)
