@@ -128,58 +128,44 @@ async def ping_network(hosts_info, cancel_event:asyncio.Event, result_callback,p
 
     #分批添加任务，控制并发数量，默认是10个任务并发执行
     try:
-        for i in range(0,total,max_concurrent_tasks):
+        semaphore = asyncio.Semaphore(max_concurrent_tasks)  # 使用asyncio信号量控制并发数量
+
+        async def semaphore_task(host):
             if cancel_event.is_set():
-                break
-            batch = hosts_info[i:i+max_concurrent_tasks]# 获取当前批次的主机信息
-            tasks = [asyncio.create_task(ping_host(host,cancel_event)) for host in batch]# 创建当前批次的任务
-            logger.info(f"开始处理批次 {i//max_concurrent_tasks + 1}，共 {len(tasks)} 个任务")
+                logger.info(f"Ping {host} 任务已取消，跳过处理")
+                return "本批次任务已取消，跳过处理"
+            async with semaphore:
+                if cancel_event.is_set():
+                    logger.info(f"Ping {host} 任务已取消，跳过处理")
+                    return "本批次任务已取消，跳过处理"
+                return await ping_host(host, cancel_event)  # 调用ping_host函数进行Ping操作
+            
+        #
+        tasks = [ asyncio.create_task(semaphore_task(host))for host in hosts_info]
 
-            try:
-                cancellation_occurred = False# 取消事件是否已发生
-                for future in asyncio.as_completed(tasks):
-                    if cancel_event.is_set() and not cancellation_occurred:
-                        logger.info("取消事件已设置，取消当前批次的任务")
-                        #取消剩余任务
-                        for task in tasks:
-                            if not task.done():
-                                task.cancel()
-                        await asyncio.gather(*tasks,return_exceptions=True)  # 确保所有任务都被取消
-                        cancellation_occurred = True
+        pending = set(tasks)  # 使用set来存储未完成的任务
+        while pending and not cancel_event.is_set():
+            done,pending = await asyncio.wait(pending,return_when=asyncio.FIRST_COMPLETED)
+            for future in done:
+                try:
+                    result = future.result()  # 获取任务结果
+                    if result:
+                        result_callback(result)  # 将结果返回给主线程，用于更新UI
+                        all_results.append(result)  # 将结果添加到总结果列表
+                        completed += 1  # 更新已完成的任务数
+                        process_callback(completed, total)
+                except Exception as e:
+                    logger.error(f"处理任务结果时发生错误: {e}")
 
-                    if cancellation_occurred:
-                        #处理剩余未完成的future以避免警告
-                        try:
-                            await future
-                        except asyncio.CancelledError:
-                            logger.info(f"任务取消失败，任务已取消")
-                        continue
-                    
-                    #任务正常完成
-                    try:
-                        result = await future
-                        if result:
-                            result_callback(result)  # 将结果返回给主线程，用于更新UI
-                            all_results.append(result)  # 将结果添加到总结果列表
-                    except asyncio.CancelledError:
-                        logger.info(f"任务被取消，跳过处理")
-                    #任务完成，更新进度
-                    completed += 1
-                    process_callback(completed, total)  # 更新进度回调
-                    logger.info(f"批次 {i//max_concurrent_tasks + 1} 任务完成，已完成 {completed}/{total} 个任务")
-            except Exception as e:
-                logger.error(f"批次 {i//max_concurrent_tasks + 1} 任务处理异常: {e}")
-                #确保取消所有任务
-                for task in tasks:
-                    if not task.done():
-                        task.cancel()
+        if pending:
+            cancel_event.set()  # 如果有未完成的任务，设置取消事件
+            logger.info("有未完成的任务，设置取消事件")
+            await asyncio.gather(*pending, return_exceptions=True)  # 等待所有未完成的任务完成，忽略异常
     
     except Exception as e:
         logger.error(f"Ping网络任务异常: {e}")
-
     finally:
-        cancel_event.set()  # 设置取消事件，确保所有任务都能被取消
-    return all_results  # 返回所有主机的Ping结果列表
+        return all_results  # 返回所有主机的Ping结果列表
 
 
 
@@ -328,15 +314,19 @@ class PingTester(wx.Panel):
     
     def _restore_ui_state(self):
         '''恢复UI状态'''
-        try:
-            wx.CallAfter(self.cancel_btn.Disable)#取消按钮禁用
-            wx.CallAfter(self.start_ping_btn.Enable)#开始按钮启用
-            wx.CallAfter(self.host_inputbox.Enable)#主机输入框启用
-            wx.CallAfter(self.result_text.Clear)#清空结果文本框
-            wx.CallAfter(self.progress.SetValue,0)#进度条设置为0
-            wx.CallAfter(self.process_text.SetLabel,"准备就绪")
-        except Exception as e:
-            logger.error(f"恢复UI状态时发生错误: {e}")
+        self.start_ping_btn.Enable()  # 启用开始Ping按钮
+        self.host_inputbox.Enable()  # 启用主机输入框
+        self.cancel_btn.Disable()  # 禁用取消按钮
+        if not self.cancel_event.is_set():
+            self.process_text.SetLabel("准备就绪")
+        else:
+            self.process_text.SetLabel("任务已取消")
+
+    async def _wait_for_cancellation(self):
+        await asyncio.sleep(0.2)  # 等待一段时间，确保UI更新
+        wx.CallAfter(self.process_text.SetLabel, "任务已取消")  # 更新UI状态
+        wx.CallAfter(self._restore_ui_state)
+
 
     def cancel_task(self, event):
         '''
@@ -351,12 +341,11 @@ class PingTester(wx.Panel):
             self.cancel_btn.Disable()
             self.process_text.SetLabel("正在取消任务")
             if self.loop and self.loop.is_running():
-                self.loop.call_soon_threadsafe(lambda:None)
+                asyncio.run_coroutine_threadsafe(self._wait_for_cancellation(),self.loop)  # 在事件循环中调用等待取消的协程
             logger.info("已发送取消事件")
         except Exception as e:
             logger.error(f"取消任务时发生错误: {e}")
-        finally:
-            self._restore_ui_state()
+            wx.CallAfter(self._restore_ui_state)
 
 if __name__ ==  "__main__":
     app = wx.App()
