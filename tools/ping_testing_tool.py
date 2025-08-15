@@ -272,22 +272,22 @@ class PingTester(wx.Panel):
             ping_network(
                 hosts_info,
                 self.cancel_event,
-                self.update_result,
+                self.update_task_progress,
                 max_concurrent_tasks=10
                 ),
             self.loop
         )
-        self.scan_task.add_done_callback(self._on_scan_complete_threadsafe)
+        self.scan_task.add_done_callback(self.on_scan_complete_threadsafe)
         #添加任务完成回调函数，用于在任务完成后更新GUI；回调函数会在调用的时候自动传入一个concurrent.futures.Future对象，用于获取任务的结果
         #因此在定义回调函数时，必须有一个参数，用于接收concurrent.futures.Future对象
 
     # 异步任务完成回调函数，用于扫描任务完成后更新GUI,只定义一个wx.CallAfter方法，调用另外一个方法来执行UI更新操作。
     # 之所以要定义两个方法，多一次调用就是为了分离功能，一个用于切换到主线程，一个用于在主线程中更新UI
-    def _on_scan_complete_threadsafe(self, future:Future):
+    def on_scan_complete_threadsafe(self, future:Future):
 
         '''异步任务完成回调函数，用于扫描任务完成后更新GUI'''
-        wx.CallAfter(self.on_scan_complete, future)#wx.CallAfter方法用于在主线程中调用异步任务完成回调函数，避免在子线程中更新GUI
-    def on_scan_complete(self, future:Future):
+        wx.CallAfter(self._on_scan_complete, future)#wx.CallAfter方法用于在主线程中调用异步任务完成回调函数，避免在子线程中更新GUI
+    def _on_scan_complete(self, future:Future):
         '''扫描任务完成回调函数，用于在任务完成后更新GUI'''
         try:
             future.result()
@@ -301,16 +301,16 @@ class PingTester(wx.Panel):
             logger.info("扫描任务完成")
 
 
-    def update_result(self, result,completed,total):#传递给start_ping方法的更新结果函数
+    def update_task_progress(self, result,completed,total):#传递给start_ping方法的更新结果函数
         '''更新结果显示，线程安全'''
-        wx.CallAfter(self._update_task_result,result,completed,total)
+        wx.CallAfter(self._update_task_progress,result,completed,total)
 
-    def _update_task_result(self,result,completed,total):#更新任务结果，内部方法
+    def _update_task_progress(self,result,completed,total):#更新任务进度，内部方法
         self.result_text.AppendText(result+"\n")
         process = int((completed/total)*100) if total >0 else 0
         self.progress_bar.SetValue(process)#更新进度条
         self.progress_text.SetLabel(f"已完成{completed}/{total}")#更新进度文本
-        self.progress_text.SetLabel(f"已完成{completed}/{total}")#更新进度文本
+
     
     def _restore_ui_state(self):
         '''恢复UI状态'''
