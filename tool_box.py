@@ -69,7 +69,7 @@ class ToolDetailPanel(wx.Panel):
         tool_sizer.Add(back_btn,0,wx.ALL,5)
 
         #3，添加一个Notebook，用来展示每个工具的操作页面
-        self.tool_notebook = wx.Notebook(self)
+        self.tool_notebook = wx.Notebook(self,style=wx.NB_LEFT)
         for tool_name,tool_class in self.tools_by_name.items():
             #创建一个工具页面
             # Create tool page with notebook as parent
