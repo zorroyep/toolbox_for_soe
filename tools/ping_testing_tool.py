@@ -2,6 +2,9 @@
 from utils import setup_logging,setup_sys_path
 setup_sys_path() #设置系统路径
 logger = setup_logging()  # 设置日志记录器
+
+from os import name
+
 import wx
 import asyncio
 import contextlib
@@ -11,11 +14,11 @@ from utils import ipAddressCheck
 from register_tool import register_tool
 
 # ping指定主机，异步任务
-async def ping_host(host, cancel_event:asyncio.Event,timeout=2):
+async def ping_host(host,param_type,cancel_event:asyncio.Event,timeout=2):
     """
     异步Ping指定主机。
     :param host: 要Ping的主机地址
-    :param cancel_event: 用于取消Ping任务的事件对象
+    :param param_type: 脚本运行平台类型
     :param timeout: 超时时间，单位秒
     :return: 如果Ping通，返回包含主机信息的字符串；如果Ping不通或任务取消，返回相应信息
     """
@@ -24,20 +27,15 @@ async def ping_host(host, cancel_event:asyncio.Event,timeout=2):
         return f"该任务未运行，用户取消Ping {host} 任务"
 
     try:
-        if hasattr(subprocess, 'CREATE_NEW_PROCESS_GROUP'):  # CREATE_NEW_PROCESS_GROUP 是 Windows 系统特有的标志
-            logger.info("Windows系统，使用windows平台的ping命令参数")
-            ping_task = await asyncio.create_subprocess_exec(
-                'ping', '-n', '1', '-w', str(timeout*1000), host,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-        else:
-            logger.info("类Unix系统，使用类Unix平台的ping命令参数")
-            ping_task = await asyncio.create_subprocess_exec(
-                'ping', '-c', '1', '-w', str(timeout), host,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
+        timeout = timeout*1000 if param_type == "windows" else timeout
+        counter = "-n" if param_type == "windows" else "-c" 
+        command_args = ['ping',str(counter),'1','-w', str(timeout), host]
+        logger.info(f"执行命令：ping {' '.join(command_args)}")
+        ping_task = await asyncio.create_subprocess_exec(
+            *command_args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
         logger.info(f"子进程已经创建完成，开始执行Ping {host} 任务，等待结果...")
 
         # 等待ping命令完成或被取消,使用cancel_event协调取消逻辑
@@ -59,7 +57,6 @@ async def ping_host(host, cancel_event:asyncio.Event,timeout=2):
                         await asyncio.wait_for(ping_task.wait(), timeout=1)  # 等待子进程自行结束，超时一秒
             logger.info(f"运行中取消Ping {host} 任务，子进程已终止")
             return f"运行中取消Ping {host} 任务"
-
         
         # 取消事件未设置，说明ping命令已完成，开始处理结果
         stdout,stderr = await ping_task.communicate()#需要获取子进程的输出和错误信息，确保管道资源被正确释放，ping_task.wait() 只会返回子进程的返回码，不会获取输出和错误信息，
@@ -68,18 +65,16 @@ async def ping_host(host, cancel_event:asyncio.Event,timeout=2):
             return f"Ping {host} 子进程返回错误信息，判断为不可达"
 
         #stdout和stderr都是字节类型，需要解码为字符串，并且需要根据操作系统的不同进行解码
-        if hasattr(subprocess, 'CREATE_NEW_PROCESS_GROUP'):  # Windows系统，使用gbk编码
-            logger.info("Windows系统，使用gbk编码解码输出")
+        if param_type == "windows":
             stdout = stdout.decode('gbk', errors='ignore')
-            logger.info(f"stdout:{stdout}")
+            logger.info(f"Windows系统，使用gbk编码解码输出,stdout:{stdout}")
             stderr = stderr.decode('gbk', errors='ignore')
-            logger.info(f"stderr:{stderr}")
+            logger.info(f"Windows系统，使用gbk编码解码输出,stderr:{stderr}")
         else:  # 类Unix系统，使用utf-8编码
-            logger.info("类Unix系统，使用utf-8编码解码输出")
             stdout = stdout.decode('utf-8', errors='ignore')
-            logger.info(f"stdout:{stdout}")
+            logger.info(f"类Unix系统，使用utf-8编码解码输出,stdout:{stdout}")
             stderr = stderr.decode('utf-8', errors='ignore')
-            logger.info(f"stderr:{stderr}")
+            logger.info(f"类Unix系统，使用utf-8编码解码输出,stderr:{stderr}")
 
         if stdout:# 如果stdout不为空，说明Ping命令有输出内容
             success_keywords = [
@@ -102,7 +97,6 @@ async def ping_host(host, cancel_event:asyncio.Event,timeout=2):
                 is_reachable = False
             return f"ping {host} 成功，主机可达" if is_reachable else f"ping {host} 失败，主机不可达"
                                
-
     except asyncio.TimeoutError:
         logger.error(f"Ping {host} 任务超时")
         return f"Ping {host} 任务超时"
@@ -112,7 +106,7 @@ async def ping_host(host, cancel_event:asyncio.Event,timeout=2):
 
 
 # 异步Ping网络
-async def ping_network(hosts_info, cancel_event:asyncio.Event, result_callback,max_concurrent_tasks=10):
+async def ping_network(hosts_info, param_type, cancel_event:asyncio.Event, result_callback,max_concurrent_tasks=10):
     '''
     异步Ping网络中的多个主机。
 
@@ -139,7 +133,7 @@ async def ping_network(hosts_info, cancel_event:asyncio.Event, result_callback,m
                 if cancel_event.is_set():
                     logger.info(f"本批次任务已取消，跳过处理")
                     return "本批次任务已取消，跳过处理"
-                return await ping_host(host, cancel_event)  # 调用ping_host函数进行Ping操作
+                return await ping_host(host, param_type, cancel_event)  # 调用ping_host函数进行Ping操作
 
         tasks = [ asyncio.create_task(semaphore_task(host))for host in hosts_info]# 将所有任务添加到任务列表中
         pending = set(tasks)  # asyncio.wait()方法的第一个参数是可迭代的future对象，使用set可以确保每个任务只被执行一次
@@ -220,6 +214,10 @@ class PingTester(wx.Panel):
         self.loop_thread = None
         self._start_event_loop()# 启动事件循环
 
+        # 判断平台
+        self.param_type = "windows" if name == "nt" else "linux"
+        logger.info(f"当前平台为{self.param_type}")
+
     def _start_event_loop(self):
         self.loop = asyncio.new_event_loop()  # 创建新的事件循环
         self.loop_thread = threading.Thread(target=self._run_loop,args=(self.loop,), daemon=True)  # 创建线程运行事件循环
@@ -271,6 +269,7 @@ class PingTester(wx.Panel):
         self.scan_task = asyncio.run_coroutine_threadsafe(
             ping_network(
                 hosts_info,
+                self.param_type,
                 self.cancel_event,
                 self.update_task_progress,
                 max_concurrent_tasks=10
