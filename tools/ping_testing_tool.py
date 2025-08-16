@@ -4,7 +4,6 @@ setup_sys_path() #设置系统路径
 logger = setup_logging()  # 设置日志记录器
 
 from os import name
-
 import wx
 import asyncio
 import contextlib
@@ -24,7 +23,7 @@ async def ping_host(host,param_type,cancel_event:asyncio.Event,timeout=2):
     """
     if cancel_event.is_set():# 任务未运行时如果被取消则
         logger.info(f"该任务未运行，用户取消Ping {host} 任务")
-        return f"该任务未运行，用户取消Ping {host} 任务"
+        return f"该任务未运行，用户取消Ping {host} 任务"#case1，ping失败，由于未运行用户取消
 
     try:
         timeout = timeout*1000 if param_type == "windows" else timeout
@@ -56,13 +55,13 @@ async def ping_host(host,param_type,cancel_event:asyncio.Event,timeout=2):
                     with contextlib.suppress(asyncio.TimeoutError):
                         await asyncio.wait_for(ping_task.wait(), timeout=1)  # 等待子进程自行结束，超时一秒
             logger.info(f"运行中取消Ping {host} 任务，子进程已终止")
-            return f"运行中取消Ping {host} 任务"
+            return f"运行中取消Ping {host} 任务"#case2，ping失败，由于运行中用户取消
         
         # 取消事件未设置，说明ping命令已完成，开始处理结果
         stdout,stderr = await ping_task.communicate()#需要获取子进程的输出和错误信息，确保管道资源被正确释放，ping_task.wait() 只会返回子进程的返回码，不会获取输出和错误信息，
         if stderr:
             logger.error(f"Ping {host} 子进程返回错误信息，判断为不可达")
-            return f"Ping {host} 子进程返回错误信息，判断为不可达"
+            return f"Ping {host} 子进程返回错误信息，判断为不可达"#case3，ping失败，由于子进程返回错误信息
 
         #stdout和stderr都是字节类型，需要解码为字符串，并且需要根据操作系统的不同进行解码
         if param_type == "windows":
@@ -95,21 +94,20 @@ async def ping_host(host,param_type,cancel_event:asyncio.Event,timeout=2):
             is_reachable = any(str(keyword) in str(stdout) for keyword in success_keywords)
             if not is_reachable and any(str(keyword) in str(stdout) for keyword in failure_keywords):
                 is_reachable = False
-            return f"ping {host} 成功，主机可达" if is_reachable else f"ping {host} 失败，主机不可达"
+            return f"ping {host} 成功，主机可达" if is_reachable else f"ping {host} 失败，主机不可达"#case4，任务正常执行，主机可达/不可达
                                
     except asyncio.TimeoutError:
         logger.error(f"Ping {host} 任务超时")
-        return f"Ping {host} 任务超时"
+        return f"Ping {host} 任务超时"#case5，任务超时，主机不可达
     except Exception as e:
         logger.error(f"Ping {host} 时发生错误: {e}")
-        return f"Ping {host} 时发生错误: {e}"
+        return f"Ping {host} 时发生错误: {e}"#case6，任务异常，主机不可达
 
 
 # 异步Ping网络
 async def ping_network(hosts_info, param_type, cancel_event:asyncio.Event, result_callback,max_concurrent_tasks=10):
     '''
     异步Ping网络中的多个主机。
-
     :param hosts_info: 主机信息列表，可以是IP地址或CIDR块
     :param cancel_event: 取消事件，用于取消任务
     :param result_callback: 结果回调函数，用于处理每个主机的Ping结果
@@ -118,13 +116,14 @@ async def ping_network(hosts_info, param_type, cancel_event:asyncio.Event, resul
     :return: 所有主机的Ping结果列表
     '''
     all_results = []# 用于存储所有主机的Ping结果
+    failure_results = []# 用于存储失败的主机
+    success_results = []# 用于存储成功的主机
     total = len(hosts_info)# 任务总数
     completed = 0# 已完成的任务数
 
     #分批添加任务，控制并发数量，默认是10个任务并发执行
     try:
         semaphore = asyncio.Semaphore(max_concurrent_tasks)  # 使用asyncio信号量控制并发数量
-
         async def semaphore_task(host):
             if cancel_event.is_set():
                 logger.info(f"本批次任务已取消，跳过处理")
@@ -157,8 +156,9 @@ async def ping_network(hosts_info, param_type, cancel_event:asyncio.Event, resul
     except Exception as e:
         logger.error(f"Ping网络任务异常: {e}")
     finally:
-        return all_results  # 返回所有主机的Ping结果列表
-
+        success_results = [result for result in all_results if "成功" in result]
+        failure_results = [result for result in all_results if "成功" not in result]
+        return success_results,failure_results
 
 
 @register_tool("网络类","PING工具")
@@ -170,8 +170,7 @@ class PingTester(wx.Panel):
         font = wx.Font(12, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL)
         self.SetFont(font)
 
-        sizer = wx.BoxSizer(wx.VERTICAL)# 垂直布局
-
+        sizer = wx.BoxSizer(wx.VERTICAL)# 全局布局，使用垂直布局
 
         # 主机输入框
         host_lable = wx.StaticText(self, label="主机：(可输入IP或CIDR，多个用逗号分隔):")
@@ -283,13 +282,14 @@ class PingTester(wx.Panel):
     # 异步任务完成回调函数，用于扫描任务完成后更新GUI,只定义一个wx.CallAfter方法，调用另外一个方法来执行UI更新操作。
     # 之所以要定义两个方法，多一次调用就是为了分离功能，一个用于切换到主线程，一个用于在主线程中更新UI
     def on_scan_complete_threadsafe(self, future:Future):
-
         '''异步任务完成回调函数，用于扫描任务完成后更新GUI'''
         wx.CallAfter(self._on_scan_complete, future)#wx.CallAfter方法用于在主线程中调用异步任务完成回调函数，避免在子线程中更新GUI
     def _on_scan_complete(self, future:Future):
         '''扫描任务完成回调函数，用于在任务完成后更新GUI'''
         try:
-            future.result()
+            success,failure = future.result()
+            logger.info(f"成功主机：{success}")
+            logger.info(f"失败主机：{failure}")
             self.result_text.AppendText("\n扫描完成！")#扫描完成后更新结果文本框
             self.progress_text.SetLabel("扫描完成")#扫描完成后更新进程条文本
         except Exception as e:
@@ -298,7 +298,6 @@ class PingTester(wx.Panel):
         finally:
             self._restore_ui_state()#恢复UI状态
             logger.info("扫描任务完成")
-
 
     def update_task_progress(self, result,completed,total):#传递给start_ping方法的更新结果函数
         '''更新结果显示，线程安全'''
@@ -309,7 +308,6 @@ class PingTester(wx.Panel):
         process = int((completed/total)*100) if total >0 else 0
         self.progress_bar.SetValue(process)#更新进度条
         self.progress_text.SetLabel(f"已完成{completed}/{total}")#更新进度文本
-
     
     def _restore_ui_state(self):
         '''恢复UI状态'''
