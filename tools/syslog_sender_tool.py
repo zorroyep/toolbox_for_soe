@@ -91,6 +91,8 @@ def send_logs(host,log,rfc,log_level,facility,port=514):
             logger.error("未知的日志级别")
     
     logger.info(formatted_log)#打印格式化后的日志内容
+    # 需移除处理器，否则每次调用该方法都会添加一个新的处理器，导致重复发送日志
+    syslog_logger.removeHandler(syslog_handler)
 
 
 @register_tool("网络类","日志发送工具")
